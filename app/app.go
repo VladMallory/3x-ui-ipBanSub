@@ -2,6 +2,7 @@ package app
 
 import (
 	"ipBanSystem/common"
+	"ipBanSystem/common/panel"
 	"log"
 	"os"
 	"os/signal"
@@ -32,11 +33,11 @@ func Run() {
 
 	analyzer := common.NewLogAnalyzer(common.IP_ACCUMULATED_PATH)
 
-	configManager := common.NewConfigManager(
-		common.PANEL_URL,
-		common.PANEL_USER,
-		common.PANEL_PASS,
-		common.INBOUND_ID,
+	configManager := panel.NewConfigManager(
+		panel.PANEL_URL,
+		panel.PANEL_USER,
+		panel.PANEL_PASS,
+		panel.INBOUND_ID,
 	)
 
 	banManager := common.NewBanManager("/var/log/ip_bans.json")
