@@ -1,8 +1,11 @@
 package app
 
 import (
-	"ipBanSystem/common"
-	"ipBanSystem/common/panel"
+	ipban "ipBanSystem/ipBan/BanService"
+	"ipBanSystem/ipBan/logger/LogsAccumulator"
+	"ipBanSystem/ipBan/logger/initLogs"
+	"ipBanSystem/ipBan/logger/logsAnalyzer"
+	"ipBanSystem/ipBan/panel"
 	"log"
 	"os"
 	"os/signal"
@@ -13,25 +16,25 @@ import (
 // Run запускает основной IP Ban сервис
 func Run() {
 	// Инициализируем логгеры
-	if err := common.InitIPBanLogger(); err != nil {
+	if err := initLogs.InitIPBanLogger(ipban.IP_BAN_LOG_PATH); err != nil {
 		log.Fatalf("Ошибка инициализации логгера: %v", err)
 	}
-	if err := common.InitBannedUsersLogger(); err != nil {
+	if err := initLogs.InitBannedUsersLogger(ipban.BANNED_USERS_LOG_PATH); err != nil {
 		log.Fatalf("Ошибка инициализации логгера забаненных пользователей: %v", err)
 	}
 
-	common.LogIPBanInfo("Запуск IP Ban сервиса...")
+	initLogs.LogIPBanInfo("Запуск IP Ban сервиса...")
 
 	// Создаем компоненты
-	accumulator := common.NewLogAccumulator(common.ACCESS_LOG_PATH, common.IP_ACCUMULATED_PATH)
+	accumulator := LogsAccumulator.NewLogAccumulator(ipban.ACCESS_LOG_PATH, ipban.IP_ACCUMULATED_PATH)
 	if err := accumulator.Start(); err != nil {
-		common.LogIPBanError("Ошибка запуска накопителя логов: %v", err)
+		initLogs.LogIPBanError("Ошибка запуска накопителя логов: %v", err)
 		return
 	}
 	accumulator.StartCleanupService()
-	common.LogIPBanInfo("Накопитель логов запущен")
+	initLogs.LogIPBanInfo("Накопитель логов запущен")
 
-	analyzer := common.NewLogAnalyzer(common.IP_ACCUMULATED_PATH)
+	analyzer := logsAnalyzer.NewLogAnalyzer(ipban.IP_ACCUMULATED_PATH, ipban.IP_COUNTER_RETENTION, ipban.IP_ACCUMULATED_PATH)
 
 	configManager := panel.NewConfigManager(
 		panel.PANEL_URL,
@@ -40,22 +43,22 @@ func Run() {
 		panel.INBOUND_ID,
 	)
 
-	banManager := common.NewBanManager("/var/log/ip_bans.json")
-	iptablesManager := common.NewIPTablesManager()
+	banManager := ipban.NewBanManager("/var/log/ip_bans.json")
+	iptablesManager := ipban.NewIPTablesManager()
 
 	// Создаем и запускаем сервис
-	service := common.NewIPBanService(
+	service := ipban.NewIPBanService(
 		analyzer,
 		configManager,
 		banManager,
 		iptablesManager,
-		common.MAX_IPS_PER_CONFIG,
-		time.Duration(common.IP_CHECK_INTERVAL)*time.Minute,
-		time.Duration(common.IP_BAN_GRACE_PERIOD)*time.Minute,
+		ipban.MAX_IPS_PER_CONFIG,
+		time.Duration(ipban.IP_CHECK_INTERVAL)*time.Minute,
+		time.Duration(ipban.IP_BAN_GRACE_PERIOD)*time.Minute,
 	)
 
 	if err := service.Start(); err != nil {
-		common.LogIPBanError("Ошибка запуска IP Ban сервиса: %v", err)
+		initLogs.LogIPBanError("Ошибка запуска IP Ban сервиса: %v", err)
 		return
 	}
 
@@ -66,5 +69,5 @@ func Run() {
 
 	// Останавливаем сервис
 	service.Stop()
-	common.LogIPBanInfo("IP Ban сервис остановлен.")
+	initLogs.LogIPBanInfo("IP Ban сервис остановлен.")
 }
