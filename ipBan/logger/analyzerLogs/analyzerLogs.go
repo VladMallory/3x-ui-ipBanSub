@@ -1,4 +1,4 @@
-package logsAnalyzer
+package analyzerLogs
 
 import (
 	"bufio"

@@ -2,8 +2,8 @@ package ipban
 
 import (
 	"fmt"
+	"ipBanSystem/ipBan/logger/analyzerLogs"
 	"ipBanSystem/ipBan/logger/initLogs"
-	"ipBanSystem/ipBan/logger/logsAnalyzer"
 	"ipBanSystem/ipBan/panel"
 	"strings"
 	"time"
@@ -11,19 +11,19 @@ import (
 
 // IPBanService основной сервис для управления IP банами
 type IPBanService struct {
-	Analyzer        *logsAnalyzer.LogAnalyzer
-	ConfigManager   *panel.ConfigManager
-	BanManager      *BanManager
-	IPTables        *IPTablesManager
-	MaxIPs          int
-	CheckInterval   time.Duration
-	GracePeriod     time.Duration
-	Running         bool
-	StopChan        chan bool
+	Analyzer      *analyzerLogs.LogAnalyzer
+	ConfigManager *panel.ConfigManager
+	BanManager    *BanManager
+	IPTables      *IPTablesManager
+	MaxIPs        int
+	CheckInterval time.Duration
+	GracePeriod   time.Duration
+	Running       bool
+	StopChan      chan bool
 }
 
 // NewIPBanService создает новый сервис IP бана
-func NewIPBanService(analyzer *logsAnalyzer.LogAnalyzer, configManager *panel.ConfigManager, banManager *BanManager, iptables *IPTablesManager, maxIPs int, checkInterval, gracePeriod time.Duration) *IPBanService {
+func NewIPBanService(analyzer *analyzerLogs.LogAnalyzer, configManager *panel.ConfigManager, banManager *BanManager, iptables *IPTablesManager, maxIPs int, checkInterval, gracePeriod time.Duration) *IPBanService {
 	return &IPBanService{
 		Analyzer:      analyzer,
 		ConfigManager: configManager,
@@ -105,7 +105,7 @@ func (s *IPBanService) performCheck() {
 	}
 
 	// Создаем карту статистики IP по email
-	ipStatsMap := make(map[string]*logsAnalyzer.EmailIPStats)
+	ipStatsMap := make(map[string]*analyzerLogs.EmailIPStats)
 	for _, stats := range logStats {
 		ipStatsMap[stats.Email] = stats
 	}
@@ -182,7 +182,7 @@ func (s *IPBanService) performCheck() {
 }
 
 // handleSuspiciousConfig обрабатывает подозрительный конфиг
-func (s *IPBanService) handleSuspiciousConfig(stats *logsAnalyzer.EmailIPStats) {
+func (s *IPBanService) handleSuspiciousConfig(stats *analyzerLogs.EmailIPStats) {
 	initLogs.LogIPBanInfo("Подозрительный конфиг: %s (IP адресов: %d, максимум: %d)",
 		stats.Email, stats.TotalIPs, s.MaxIPs)
 
@@ -223,7 +223,7 @@ func (s *IPBanService) handleSuspiciousConfig(stats *logsAnalyzer.EmailIPStats) 
 }
 
 // handleNormalConfig обрабатывает нормальный конфиг
-func (s *IPBanService) handleNormalConfig(stats *logsAnalyzer.EmailIPStats) {
+func (s *IPBanService) handleNormalConfig(stats *analyzerLogs.EmailIPStats) {
 	// Логируем информацию о нормальном конфиге
 	initLogs.LogIPBanInfo("%s (IP адресов: %d, максимум: %d)", stats.Email, stats.TotalIPs, s.MaxIPs)
 
@@ -322,7 +322,7 @@ func (s *IPBanService) PrintCurrentStats() {
 
 // IPTablesManager управляет блокировкой IP через iptables
 // getIPAddressesFromStats извлекает IP адреса из статистики для логирования
-func getIPAddressesFromStats(stats *logsAnalyzer.EmailIPStats) []string {
+func getIPAddressesFromStats(stats *analyzerLogs.EmailIPStats) []string {
 	var ips []string
 	for ip := range stats.IPs {
 		ips = append(ips, ip)

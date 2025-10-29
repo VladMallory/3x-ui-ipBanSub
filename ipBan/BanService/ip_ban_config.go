@@ -77,5 +77,5 @@ func init() {
 	// Включает или отключает логирование забаненных пользователей.
 	LOG_BANNED_USERS = true
 	// Путь к логам забаненных пользователей.
-	BANNED_USERS_LOG_PATH = "/root/tools/logs/ipBanSystem/ban.log"
+	BANNED_USERS_LOG_PATH = "/root/tools/ipBanSystem/logs/ban.log"
 }

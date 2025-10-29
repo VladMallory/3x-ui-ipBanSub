@@ -2,9 +2,9 @@ package app
 
 import (
 	ipban "ipBanSystem/ipBan/BanService"
-	"ipBanSystem/ipBan/logger/LogsAccumulator"
+	"ipBanSystem/ipBan/logger/accumulatorLogs"
+	"ipBanSystem/ipBan/logger/analyzerLogs"
 	"ipBanSystem/ipBan/logger/initLogs"
-	"ipBanSystem/ipBan/logger/logsAnalyzer"
 	"ipBanSystem/ipBan/panel"
 	"log"
 	"os"
@@ -26,7 +26,7 @@ func Run() {
 	initLogs.LogIPBanInfo("Запуск IP Ban сервиса...")
 
 	// Создаем компоненты
-	accumulator := LogsAccumulator.NewLogAccumulator(ipban.ACCESS_LOG_PATH, ipban.IP_ACCUMULATED_PATH)
+	accumulator := accumulatorLogs.NewLogAccumulator(ipban.ACCESS_LOG_PATH, ipban.IP_ACCUMULATED_PATH)
 	if err := accumulator.Start(); err != nil {
 		initLogs.LogIPBanError("Ошибка запуска накопителя логов: %v", err)
 		return
@@ -34,7 +34,7 @@ func Run() {
 	accumulator.StartCleanupService()
 	initLogs.LogIPBanInfo("Накопитель логов запущен")
 
-	analyzer := logsAnalyzer.NewLogAnalyzer(ipban.IP_ACCUMULATED_PATH, ipban.IP_COUNTER_RETENTION, ipban.IP_ACCUMULATED_PATH)
+	analyzer := analyzerLogs.NewLogAnalyzer(ipban.IP_ACCUMULATED_PATH, ipban.IP_COUNTER_RETENTION, ipban.IP_ACCUMULATED_PATH)
 
 	configManager := panel.NewConfigManager(
 		panel.PANEL_URL,
