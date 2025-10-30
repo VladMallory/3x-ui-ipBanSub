@@ -7,6 +7,7 @@ import (
 	"ipBanSystem/ipBan/logger/initLogs"
 	"ipBanSystem/ipBan/panel"
 	"ipBanSystem/ipBan/panel/auth"
+	"ipBanSystem/ipBan/panel/client"
 	"ipBanSystem/ipBan/panel/env"
 	"log"
 	"os"
@@ -53,6 +54,14 @@ func Run() {
 	if err := auth.Login(configManager); err != nil {
 		initLogs.LogIPBanError("Ошибка авторизации в панели: %v", err)
 		return
+	}
+
+	// Автокоррекция VLESS настроек: гарантируем decryption:"none" на старте
+	if err := client.EnsureVLESSDecryptionNone(configManager); err != nil {
+		initLogs.LogIPBanError("Ошибка автокоррекции VLESS настроек: %v", err)
+		// продолжаем работу, чтобы не блокировать сервис
+	} else {
+		initLogs.LogIPBanInfo("VLESS настройки проверены: decryption=none")
 	}
 
 	banManager := ipban.NewBanManager("/var/log/ip_bans.json")

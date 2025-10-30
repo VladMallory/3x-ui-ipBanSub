@@ -18,15 +18,16 @@ func Enable(cm *panel.ConfigManager, emailOrID interface{}) error {
     // Ветвим логику по типу входного параметра: int или string
     switch v := emailOrID.(type) {
     case int:
-        // Прямое включение по ID
-        return updateConfig(cm, v, true)
+        // Историческая совместимость: int не поддерживается для строкового id
+        return fmt.Errorf("ID теперь строковый, передайте string")
     case string:
         // Ищем клиента по email и включаем его по найденному ID
-        c, err := ByEmail(cm, v)
-        if err != nil {
-            return fmt.Errorf("ошибка получения клиента: %v", err)
+        // Если это email — найдём клиента; если это строковый id — обновим напрямую
+        if c, err := ByEmail(cm, v); err == nil {
+            return updateConfig(cm, c.ID, true)
         }
-        return updateConfig(cm, c.ID, true)
+        // Не нашли по email — считаем, что передан id
+        return updateConfig(cm, v, true)
     default:
         return fmt.Errorf("неподдерживаемый тип параметра: %T", emailOrID)
     }
@@ -37,22 +38,20 @@ func Disable(cm *panel.ConfigManager, emailOrID interface{}) error {
     // Ветвим логику по типу входного параметра: int или string
     switch v := emailOrID.(type) {
     case int:
-        // Прямое отключение по ID
-        return updateConfig(cm, v, false)
+        // Историческая совместимость: int не поддерживается для строкового id
+        return fmt.Errorf("ID теперь строковый, передайте string")
     case string:
-        // Ищем клиента по email и отключаем его по найденному ID
-        c, err := ByEmail(cm, v)
-        if err != nil {
-            return fmt.Errorf("ошибка получения клиента: %v", err)
+        if c, err := ByEmail(cm, v); err == nil {
+            return updateConfig(cm, c.ID, false)
         }
-        return updateConfig(cm, c.ID, false)
+        return updateConfig(cm, v, false)
     default:
         return fmt.Errorf("неподдерживаемый тип параметра: %T", emailOrID)
     }
 }
 
 // updateConfig изменяет флаг Enable клиента по ID и отправляет обновление inbound
-func updateConfig(cm *panel.ConfigManager, clientID int, enable bool) error {
+func updateConfig(cm *panel.ConfigManager, clientID string, enable bool) error {
     // Загружаем текущие настройки клиентов
     settings, err := GetSettings(cm)
     if err != nil {
@@ -70,7 +69,7 @@ func updateConfig(cm *panel.ConfigManager, clientID int, enable bool) error {
     }
 
     if !clientFound {
-        return fmt.Errorf("клиент с ID %d не найден", clientID)
+        return fmt.Errorf("клиент с ID %s не найден", clientID)
     }
 
     // Получаем inbound для применения обновлённых настроек
@@ -79,8 +78,16 @@ func updateConfig(cm *panel.ConfigManager, clientID int, enable bool) error {
         return fmt.Errorf("ошибка получения inbound: %v", err)
     }
 
-    // Сериализуем обновлённые настройки и присваиваем их inbound
-    settingsJSON, err := json.Marshal(settings)
+    // Аккуратно обновляем JSON настроек inbound: сохраняем прочие поля и клиенты
+    var raw map[string]interface{}
+    if err := json.Unmarshal([]byte(inb.Settings), &raw); err != nil {
+        return fmt.Errorf("ошибка парсинга исходных настроек inbound: %v", err)
+    }
+    raw["clients"] = settings.Clients
+    if dec, ok := raw["decryption"].(string); !ok || dec != "none" {
+        raw["decryption"] = "none"
+    }
+    settingsJSON, err := json.Marshal(raw)
     if err != nil {
         return fmt.Errorf("ошибка сериализации настроек: %v", err)
     }
@@ -127,6 +134,11 @@ func updateConfig(cm *panel.ConfigManager, clientID int, enable bool) error {
 
     if !response.Success {
         return fmt.Errorf("ошибка обновления клиента: %s", response.Msg)
+    }
+
+    // Выполняем жёсткий ресет, чтобы панель/Xray наверняка применили изменения
+    if err := HardResetInbound(cm); err != nil {
+        return fmt.Errorf("обновление прошло, но жёсткий ресет не удался: %v", err)
     }
 
     return nil

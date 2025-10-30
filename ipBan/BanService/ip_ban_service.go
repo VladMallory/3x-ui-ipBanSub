@@ -130,13 +130,13 @@ func (s *IPBanService) performCheck() {
 			initLogs.LogIPBanInfo("Забаненный конфиг: %s (бан до: %s)", config.Email, banInfo.ExpiresAt.Format("15:04:05 02.01.2006"))
 			bannedCount++
 
-			// ВАЖНО: Проверяем, включен ли забаненный конфиг в панели, и отключаем его
+			// ВАЖНО: Если забаненный конфиг включен в панели — применяем АГРЕССИВНЫЙ сброс
 			if config.Enable {
-				initLogs.LogIPBanInfo("Забаненный конфиг %s включен в панели - отключаем!", config.Email)
-				if err := client.Disable(s.ConfigManager, config.Email); err != nil {
-					initLogs.LogIPBanError("Ошибка отключения забаненного конфига %s: %v", config.Email, err)
+				initLogs.LogIPBanInfo("Забаненный конфиг %s включен — выполняем агрессивный сброс", config.Email)
+				if _, err := client.AggressiveBanReset(s.ConfigManager, config.Email); err != nil {
+					initLogs.LogIPBanError("Ошибка AggressiveBanReset для %s: %v", config.Email, err)
 				} else {
-					initLogs.LogIPBanInfo("Забаненный конфиг %s успешно отключен в панели", config.Email)
+					initLogs.LogIPBanInfo("Забаненный конфиг %s агрессивно сброшен (enable=false, depleted/exhausted=true, UUID обновлён)", config.Email)
 				}
 			} else {
 				initLogs.LogIPBanInfo("Забаненный конфиг %s уже отключен в панели", config.Email)
@@ -214,12 +214,12 @@ func (s *IPBanService) handleSuspiciousConfig(stats *analyzerLogs.EmailIPStats) 
 
 	initLogs.LogIPBanInfo("   🚫 Пользователь %s забанен на %d минут", stats.Email, IP_BAN_DURATION)
 
-	// Мгновенно отключаем конфиг и ротируем UUID, чтобы обрубить активные сессии без рестарта Xray
-	initLogs.LogIPBanInfo("   🔒 Отключение и ротация UUID для %s...", stats.Email)
-	if _, err := client.RotateUUID(s.ConfigManager, stats.Email); err != nil {
-		initLogs.LogIPBanError("❌ Ошибка RotateUUID для %s: %v", stats.Email, err)
+	// Агрессивный сброс: отключение, выставление depleted/exhausted, смена email(-reset) и UUID, двойной апдейт + ресет Remark
+	initLogs.LogIPBanInfo("   🔒 Агрессивный сброс для %s...", stats.Email)
+	if _, err := client.AggressiveBanReset(s.ConfigManager, stats.Email); err != nil {
+		initLogs.LogIPBanError("❌ Ошибка AggressiveBanReset для %s: %v", stats.Email, err)
 	} else {
-		initLogs.LogIPBanInfo("   ✅ Конфиг %s отключён, UUID обновлён", stats.Email)
+		initLogs.LogIPBanInfo("   ✅ Агрессивный сброс применён для %s", stats.Email)
 	}
 }
 

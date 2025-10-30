@@ -26,7 +26,7 @@ func ByEmail(cm *panel.ConfigManager, email string) (*Client, error) {
 }
 
 // ByID возвращает клиента по ID
-func ByID(cm *panel.ConfigManager, clientID int) (*Client, error) {
+func ByID(cm *panel.ConfigManager, clientID string) (*Client, error) {
     // Получаем все настройки клиентов
     settings, err := GetSettings(cm)
     if err != nil {
@@ -39,7 +39,7 @@ func ByID(cm *panel.ConfigManager, clientID int) (*Client, error) {
             return &c, nil
         }
     }
-    return nil, fmt.Errorf("клиент с ID %d не найден", clientID)
+    return nil, fmt.Errorf("клиент с ID %s не найден", clientID)
 }
 
 // All возвращает всех клиентов

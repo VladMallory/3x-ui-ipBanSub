@@ -33,11 +33,11 @@ func Add(cm *panel.ConfigManager, email string, totalGB int64, expiryTime int64)
 
     // Формируем структуру нового клиента
     newClient := Client{
-        ID:         len(settings.Clients) + 1,
+        // В x-ui (vless) поле id — это UUID-строка
+        ID:         uuid.New().String(),
         InboundID:  cm.InboundID,
         Enable:     true,
         Email:      email,
-        UUID:       uuid.New().String(),
         Flow:       "",
         Limitip:    0,
         TotalGB:    totalGB,
@@ -54,8 +54,19 @@ func Add(cm *panel.ConfigManager, email string, totalGB int64, expiryTime int64)
         return nil, fmt.Errorf("ошибка получения inbound: %v", err)
     }
 
-    // Сериализуем обновлённые настройки клиентов и сохраняем в inbound
-    settingsJSON, err := json.Marshal(settings)
+    // Аккуратно обновляем JSON настроек inbound: сохраняем прочие поля и клиенты
+    var raw map[string]interface{}
+    if err := json.Unmarshal([]byte(inb.Settings), &raw); err != nil {
+        return nil, fmt.Errorf("ошибка парсинга исходных настроек inbound: %v", err)
+    }
+    // Обновляем массив клиентов
+    raw["clients"] = settings.Clients
+    // Обеспечиваем требование XRAY для VLESS: decryption:"none"
+    if dec, ok := raw["decryption"].(string); !ok || dec != "none" {
+        raw["decryption"] = "none"
+    }
+
+    settingsJSON, err := json.Marshal(raw)
     if err != nil {
         return nil, fmt.Errorf("ошибка сериализации настроек: %v", err)
     }
