@@ -21,7 +21,7 @@ import (
 func HardResetInbound(cm *panel.ConfigManager) error {
 	inb, err := inbound.GetInbound(cm)
 	if err != nil {
-		return fmt.Errorf("ошибка получения inbound: %v")
+		return fmt.Errorf("ошибка получения inbound: %v", err)
 	}
 
 	// Нормализуем базовое имя без суффикса -reset
@@ -30,7 +30,7 @@ func HardResetInbound(cm *panel.ConfigManager) error {
 
 	// Первый апдейт: remark -> remark-reset
 	if err := updateInboundRemark(cm, inb, reset); err != nil {
-		return fmt.Errorf("ошибка первого обновления Remark: %v")
+		return fmt.Errorf("ошибка первого обновления Remark: %v", err)
 	}
 
 	// Небольшая пауза, чтобы панель/Xray применили изменение
@@ -38,7 +38,7 @@ func HardResetInbound(cm *panel.ConfigManager) error {
 
 	// Второй апдейт: remark-reset -> remark
 	if err := updateInboundRemark(cm, inb, base); err != nil {
-		return fmt.Errorf("ошибка второго обновления Remark: %v")
+		return fmt.Errorf("ошибка второго обновления Remark: %v", err)
 	}
 
 	return nil
@@ -52,25 +52,25 @@ func updateInboundRemark(cm *panel.ConfigManager, inb *inbound.Inbound, newRemar
 	url := fmt.Sprintf("%spanel/api/inbounds/update/%d", cm.PanelURL, cm.InboundID)
 	inbJSON, err := json.Marshal(inb)
 	if err != nil {
-		return fmt.Errorf("ошибка сериализации inbound: %v")
+		return fmt.Errorf("ошибка сериализации inbound: %v", err)
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(inbJSON))
 	if err != nil {
-		return fmt.Errorf("ошибка создания запроса: %v")
+		return fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Add("Cookie", cm.SessionCookie)
 
 	resp, err := cm.Client.Do(req)
 	if err != nil {
-		return fmt.Errorf("ошибка выполнения запроса: %v")
+		return fmt.Errorf("ошибка выполнения запроса: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("ошибка чтения ответа: %v")
+		return fmt.Errorf("ошибка чтения ответа: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -79,7 +79,7 @@ func updateInboundRemark(cm *panel.ConfigManager, inb *inbound.Inbound, newRemar
 
 	var response api.APIResponse
 	if err := json.Unmarshal(body, &response); err != nil {
-		return fmt.Errorf("ошибка парсинга JSON: %v")
+		return fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
 	if !response.Success {
