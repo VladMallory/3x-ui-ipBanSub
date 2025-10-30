@@ -50,19 +50,37 @@ func Disable(cm *panel.ConfigManager, emailOrID interface{}) error {
     }
 }
 
-// updateConfig изменяет флаг Enable клиента по ID и отправляет обновление inbound
+// updateConfig изменяет флаг Enable клиента по ID через JSON‑патч, без пересборки массива
 func updateConfig(cm *panel.ConfigManager, clientID string, enable bool) error {
-    // Загружаем текущие настройки клиентов
-    settings, err := GetSettings(cm)
+    // Получаем inbound
+    inb, err := inbound.GetInbound(cm)
     if err != nil {
-        return fmt.Errorf("ошибка получения настроек клиентов: %v", err)
+        return fmt.Errorf("ошибка получения inbound: %v", err)
     }
 
-    // Ищем клиента по ID и обновляем флаг Enable
+    // Парсим настройки inbound как произвольный JSON
+    var raw map[string]interface{}
+    if err := json.Unmarshal([]byte(inb.Settings), &raw); err != nil {
+        return fmt.Errorf("ошибка парсинга исходных настроек inbound: %v", err)
+    }
+
+    // Получаем массив клиентов как []interface{}
+    clientsAny, ok := raw["clients"].([]interface{})
+    if !ok {
+        return fmt.Errorf("поле clients отсутствует или имеет неверный тип")
+    }
+
+    // Находим клиента по id и патчим только поле enable
     clientFound := false
-    for i := range settings.Clients {
-        if settings.Clients[i].ID == clientID {
-            settings.Clients[i].Enable = enable
+    for i := range clientsAny {
+        m, ok := clientsAny[i].(map[string]interface{})
+        if !ok {
+            continue
+        }
+        idVal, _ := m["id"].(string)
+        if idVal == clientID {
+            m["enable"] = enable
+            clientsAny[i] = m
             clientFound = true
             break
         }
@@ -72,44 +90,33 @@ func updateConfig(cm *panel.ConfigManager, clientID string, enable bool) error {
         return fmt.Errorf("клиент с ID %s не найден", clientID)
     }
 
-    // Получаем inbound для применения обновлённых настроек
-    inb, err := inbound.GetInbound(cm)
-    if err != nil {
-        return fmt.Errorf("ошибка получения inbound: %v", err)
-    }
-
-    // Аккуратно обновляем JSON настроек inbound: сохраняем прочие поля и клиенты
-    var raw map[string]interface{}
-    if err := json.Unmarshal([]byte(inb.Settings), &raw); err != nil {
-        return fmt.Errorf("ошибка парсинга исходных настроек inbound: %v", err)
-    }
-    raw["clients"] = settings.Clients
+    // Возвращаем обновленный массив клиентов и гарантируем decryption:"none"
+    raw["clients"] = clientsAny
     if dec, ok := raw["decryption"].(string); !ok || dec != "none" {
         raw["decryption"] = "none"
     }
+
+    // Сериализуем обратно в строку settings
     settingsJSON, err := json.Marshal(raw)
     if err != nil {
         return fmt.Errorf("ошибка сериализации настроек: %v", err)
     }
     inb.Settings = string(settingsJSON)
 
-    // Готовим запрос на обновление inbound в панели
+    // Готовим запрос на обновление inbound
     url := fmt.Sprintf("%spanel/api/inbounds/update/%d", cm.PanelURL, cm.InboundID)
     inbJSON, err := json.Marshal(inb)
     if err != nil {
         return fmt.Errorf("ошибка сериализации inbound: %v", err)
     }
 
-    // Создаём POST‑запрос для сохранения изменений
     req, err := http.NewRequest("POST", url, bytes.NewBuffer(inbJSON))
     if err != nil {
         return fmt.Errorf("ошибка создания запроса: %v", err)
     }
-
     req.Header.Set("Content-Type", "application/json")
     req.Header.Add("Cookie", cm.SessionCookie)
 
-    // Выполняем запрос и читаем ответ
     resp, err := cm.Client.Do(req)
     if err != nil {
         return fmt.Errorf("ошибка выполнения запроса: %v", err)
@@ -121,22 +128,19 @@ func updateConfig(cm *panel.ConfigManager, clientID string, enable bool) error {
         return fmt.Errorf("ошибка чтения ответа: %v", err)
     }
 
-    // Проверяем HTTP‑статус
     if resp.StatusCode != http.StatusOK {
         return fmt.Errorf("некорректный статус ответа: %d, body=%s", resp.StatusCode, string(body))
     }
 
-    // Парсим ответ панели и проверяем успешность операции
     var response api.APIResponse
     if err := json.Unmarshal(body, &response); err != nil {
         return fmt.Errorf("ошибка парсинга JSON: %v", err)
     }
-
     if !response.Success {
         return fmt.Errorf("ошибка обновления клиента: %s", response.Msg)
     }
 
-    // Выполняем жёсткий ресет, чтобы панель/Xray наверняка применили изменения
+    // Жёсткий ресет
     if err := HardResetInbound(cm); err != nil {
         return fmt.Errorf("обновление прошло, но жёсткий ресет не удался: %v", err)
     }

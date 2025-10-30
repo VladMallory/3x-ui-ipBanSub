@@ -1,19 +1,19 @@
 package client
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"time"
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net/http"
+    "strings"
+    "time"
 
-	"github.com/google/uuid"
+    "github.com/google/uuid"
 
-	"ipBanSystem/ipBan/panel"
-	"ipBanSystem/ipBan/panel/api"
-	"ipBanSystem/ipBan/panel/inbound"
+    "ipBanSystem/ipBan/panel"
+    "ipBanSystem/ipBan/panel/api"
+    "ipBanSystem/ipBan/panel/inbound"
 )
 
 // AggressiveBanReset выполняет максимально жёсткую процедуру для бана:
@@ -26,95 +26,110 @@ import (
 // - применяет второй апдейт
 // Возвращает новый UUID.
 func AggressiveBanReset(cm *panel.ConfigManager, email string) (string, error) {
-	// Получаем текущие настройки
-	settings, err := GetSettings(cm)
-	if err != nil {
-		return "", fmt.Errorf("ошибка получения настроек клиентов: %v", err)
-	}
+    // Получаем inbound
+    inb, err := inbound.GetInbound(cm)
+    if err != nil {
+        return "", fmt.Errorf("ошибка получения inbound: %v", err)
+    }
 
-	// Найдём клиента по email без учёта регистра
-	idx := -1
-	for i := range settings.Clients {
-		if strings.EqualFold(settings.Clients[i].Email, email) {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return "", fmt.Errorf("клиент с email %s не найден", email)
-	}
+    // Парсим исходные настройки как произвольный JSON
+    var raw map[string]interface{}
+    if err := json.Unmarshal([]byte(inb.Settings), &raw); err != nil {
+        return "", fmt.Errorf("ошибка парсинга исходных настроек inbound: %v", err)
+    }
 
-	// Получим inbound
-	inb, err := inbound.GetInbound(cm)
-	if err != nil {
-		return "", fmt.Errorf("ошибка получения inbound: %v", err)
-	}
+    // Достаём массив клиентов как []interface{}
+    clientsAny, ok := raw["clients"].([]interface{})
+    if !ok {
+        return "", fmt.Errorf("поле clients отсутствует или имеет неверный тип")
+    }
 
-	// Разберём исходные настройки inbound, сохраним прочие поля
-	var raw map[string]interface{}
-	if err := json.Unmarshal([]byte(inb.Settings), &raw); err != nil {
-		return "", fmt.Errorf("ошибка парсинга исходных настроек inbound: %v", err)
-	}
+    // Фаза A: патчим только целевого клиента по email: enable=false, depleted/exhausted=true, email+"-reset", id=newUUID
+    newUUID := ""
+    resetEmail := ""
+    trueVal := true
+    found := false
+    for i := range clientsAny {
+        m, ok := clientsAny[i].(map[string]interface{})
+        if !ok {
+            continue
+        }
+        em, _ := m["email"].(string)
+        if strings.EqualFold(em, email) {
+            resetEmail = em + "-reset"
+            m["enable"] = false
+            m["depleted"] = &trueVal
+            m["exhausted"] = &trueVal
+            m["email"] = resetEmail
+            newUUID = uuid.New().String()
+            m["id"] = newUUID
+            clientsAny[i] = m
+            found = true
+            break
+        }
+    }
+    if !found {
+        return "", fmt.Errorf("клиент с email %s не найден", email)
+    }
 
-	// Фаза A: выставляем depleted/exhausted=true, отключаем, меняем email на -reset
-	trueVal := true
-	resetEmail := settings.Clients[idx].Email + "-reset"
-	settings.Clients[idx].Enable = false
-	settings.Clients[idx].Depleted = &trueVal
-	settings.Clients[idx].Exhausted = &trueVal
-	settings.Clients[idx].Email = resetEmail
+    // Обновляем клиентов и принудительно ставим decryption=none
+    raw["clients"] = clientsAny
+    if dec, ok := raw["decryption"].(string); !ok || dec != "none" {
+        raw["decryption"] = "none"
+    }
+    settingsJSON_A, err := json.Marshal(raw)
+    if err != nil {
+        return "", fmt.Errorf("ошибка сериализации настроек (A): %v", err)
+    }
+    inb.Settings = string(settingsJSON_A)
 
-	// Меняем UUID сразу, чтобы старые сессии отвалились после применения
-	newUUID := uuid.New().String()
-	settings.Clients[idx].ID = newUUID
+    // Отправляем апдейт A
+    if err := postInboundUpdate(cm, inb); err != nil {
+        return "", fmt.Errorf("ошибка обновления inbound (A): %v")
+    }
 
-	// Обновляем clients и принудительно ставим decryption=none
-	raw["clients"] = settings.Clients
-	if dec, ok := raw["decryption"].(string); !ok || dec != "none" {
-		raw["decryption"] = "none"
-	}
-	settingsJSON_A, err := json.Marshal(raw)
-	if err != nil {
-		return "", fmt.Errorf("ошибка сериализации настроек (A): %v", err)
-	}
-	inb.Settings = string(settingsJSON_A)
+    // Небольшая пауза
+    time.Sleep(1000 * time.Millisecond)
 
-	// Отправляем апдейт A
-	if err := postInboundUpdate(cm, inb); err != nil {
-		return "", fmt.Errorf("ошибка обновления inbound (A): %v")
-	}
+    // Фаза B: возвращаем email, оставляя depleted/exhausted=true и enable=false
+    for i := range clientsAny {
+        m, ok := clientsAny[i].(map[string]interface{})
+        if !ok {
+            continue
+        }
+        em, _ := m["email"].(string)
+        if em == resetEmail {
+            // Вернём исходный email
+            m["email"] = strings.TrimSuffix(resetEmail, "-reset")
+            m["enable"] = false
+            m["depleted"] = &trueVal
+            m["exhausted"] = &trueVal
+            clientsAny[i] = m
+            break
+        }
+    }
 
-	// Небольшая пауза
-	time.Sleep(1000 * time.Millisecond)
+    raw["clients"] = clientsAny
+    if dec, ok := raw["decryption"].(string); !ok || dec != "none" {
+        raw["decryption"] = "none"
+    }
+    settingsJSON_B, err := json.Marshal(raw)
+    if err != nil {
+        return "", fmt.Errorf("ошибка сериализации настроек (B): %v", err)
+    }
+    inb.Settings = string(settingsJSON_B)
 
-	// Фаза B: возвращаем email, оставляем depleted/exhausted=TRUE и enable=false (забанен)
-	settings.Clients[idx].Email = strings.TrimSuffix(resetEmail, "-reset")
-	settings.Clients[idx].Depleted = &trueVal
-	settings.Clients[idx].Exhausted = &trueVal
-	settings.Clients[idx].Enable = false
+    // Отправляем апдейт B
+    if err := postInboundUpdate(cm, inb); err != nil {
+        return "", fmt.Errorf("ошибка обновления inbound (B): %v")
+    }
 
-	// Обновляем clients и деcryption
-	raw["clients"] = settings.Clients
-	if dec, ok := raw["decryption"].(string); !ok || dec != "none" {
-		raw["decryption"] = "none"
-	}
-	settingsJSON_B, err := json.Marshal(raw)
-	if err != nil {
-		return "", fmt.Errorf("ошибка сериализации настроек (B): %v", err)
-	}
-	inb.Settings = string(settingsJSON_B)
+    // Жёсткий ресет Remark
+    if err := HardResetInbound(cm); err != nil {
+        return "", fmt.Errorf("жёсткий ресет Remark не удался: %v")
+    }
 
-	// Отправляем апдейт B
-	if err := postInboundUpdate(cm, inb); err != nil {
-		return "", fmt.Errorf("ошибка обновления inbound (B): %v")
-	}
-
-	// Жёсткий ресет Remark
-	if err := HardResetInbound(cm); err != nil {
-		return "", fmt.Errorf("жёсткий ресет Remark не удался: %v")
-	}
-
-	return newUUID, nil
+    return newUUID, nil
 }
 
 // postInboundUpdate отправляет объект inbound в панель

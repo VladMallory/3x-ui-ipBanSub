@@ -13,28 +13,30 @@ import (
 
 // Client структура клиента для x-ui
 type Client struct {
-    // ID — уникальный идентификатор клиента в рамках inbound
-    ID string `json:"id"`
-    // InboundID — идентификатор inbound, к которому относится клиент
-    InboundID int `json:"inboundId"`
-    // Enable — флаг включённости клиента (разрешен доступ)
-    Enable bool `json:"enable"`
-    // Email — уникальный идентификатор пользователя (может использоваться как логин)
-    Email string `json:"email"`
-    // Flow — дополнительные параметры потока (зависит от протокола), обычно пусто
-    Flow string `json:"flow"`
-    // Limitip — ограничение по IP для клиента (0 — без ограничений)
-    Limitip int `json:"limitip"`
-    // TotalGB — общий лимит трафика в гигабайтах
-    TotalGB int64 `json:"totalGB"`
-    // ExpiryTime — время истечения доступа (unix timestamp, миллисекунды)
-    ExpiryTime int64 `json:"expiryTime"`
-    // Reset — сброс счётчиков трафика (значение зависит от панели)
-    Reset int `json:"reset"`
+	// ID — уникальный идентификатор клиента в рамках inbound
+	ID string `json:"id"`
+	// InboundID — идентификатор inbound, к которому относится клиент
+	InboundID int `json:"inboundId"`
+	// Enable — флаг включённости клиента (разрешен доступ)
+	Enable bool `json:"enable"`
+	// Email — уникальный идентификатор пользователя (может использоваться как логин)
+	Email string `json:"email"`
+	// SubID — идентификатор подписки (subscription id), должен сохраняться неизменным
+	SubID string `json:"subId"`
+	// Flow — дополнительные параметры потока (зависит от протокола), обычно пусто
+	Flow string `json:"flow"`
+	// Limitip — ограничение по IP для клиента (0 — без ограничений)
+	Limitip int `json:"limitip"`
+	// TotalGB — общий лимит трафика в гигабайтах
+	TotalGB int64 `json:"totalGB"`
+	// ExpiryTime — время истечения доступа (unix timestamp, миллисекунды)
+	ExpiryTime int64 `json:"expiryTime"`
+	// Reset — сброс счётчиков трафика (значение зависит от панели)
+	Reset int `json:"reset"`
 
-    // Дополнительные поля состояния для совместимости с панелью и ProxyMaster
-    Depleted  *bool `json:"depleted,omitempty"`
-    Exhausted *bool `json:"exhausted,omitempty"`
+	// Дополнительные поля состояния для совместимости с панелью и ProxyMaster
+	Depleted  *bool `json:"depleted,omitempty"`
+	Exhausted *bool `json:"exhausted,omitempty"`
 }
 
 // Settings структура настроек клиентов
