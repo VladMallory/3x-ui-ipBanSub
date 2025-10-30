@@ -6,6 +6,8 @@ import (
 	"ipBanSystem/ipBan/logger/analyzerLogs"
 	"ipBanSystem/ipBan/logger/initLogs"
 	"ipBanSystem/ipBan/panel"
+	"ipBanSystem/ipBan/panel/auth"
+	"ipBanSystem/ipBan/panel/env"
 	"log"
 	"os"
 	"os/signal"
@@ -15,6 +17,7 @@ import (
 
 // Run запускает основной IP Ban сервис
 func Run() {
+	// ===ЛОГИ===
 	// Инициализируем логгеры
 	if err := initLogs.InitIPBanLogger(ipban.IP_BAN_LOG_PATH); err != nil {
 		log.Fatalf("Ошибка инициализации логгера: %v", err)
@@ -36,12 +39,21 @@ func Run() {
 
 	analyzer := analyzerLogs.NewLogAnalyzer(ipban.IP_ACCUMULATED_PATH, ipban.IP_COUNTER_RETENTION, ipban.IP_ACCUMULATED_PATH)
 
+	// Загружаем конфигурацию панели из окружения (один файл = одно действие)
+	cfg := env.MustLoad()
+
 	configManager := panel.NewConfigManager(
-		panel.PANEL_URL,
-		panel.PANEL_USER,
-		panel.PANEL_PASS,
-		panel.INBOUND_ID,
+		cfg.PanelURL,
+		cfg.PanelUser,
+		cfg.PanelPass,
+		cfg.InboundID,
 	)
+
+	// Авторизация в панели для получения сессионной куки
+	if err := auth.Login(configManager); err != nil {
+		initLogs.LogIPBanError("Ошибка авторизации в панели: %v", err)
+		return
+	}
 
 	banManager := ipban.NewBanManager("/var/log/ip_bans.json")
 	iptablesManager := ipban.NewIPTablesManager()

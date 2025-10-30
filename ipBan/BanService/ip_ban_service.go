@@ -5,6 +5,7 @@ import (
 	"ipBanSystem/ipBan/logger/analyzerLogs"
 	"ipBanSystem/ipBan/logger/initLogs"
 	"ipBanSystem/ipBan/panel"
+	"ipBanSystem/ipBan/panel/client"
 	"strings"
 	"time"
 )
@@ -86,7 +87,7 @@ func (s *IPBanService) performCheck() {
 	initLogs.LogIPBanInfo("Начало проверки...")
 
 	// Получаем все конфиги из панели
-	allConfigs, err := s.ConfigManager.GetConfigs()
+	allConfigs, err := client.All(s.ConfigManager)
 	if err != nil {
 		initLogs.LogIPBanError("Ошибка получения конфигов из панели: %v", err)
 		return
@@ -132,7 +133,7 @@ func (s *IPBanService) performCheck() {
 			// ВАЖНО: Проверяем, включен ли забаненный конфиг в панели, и отключаем его
 			if config.Enable {
 				initLogs.LogIPBanInfo("Забаненный конфиг %s включен в панели - отключаем!", config.Email)
-				if err := s.ConfigManager.DisableConfig(config.Email); err != nil {
+				if err := client.Disable(s.ConfigManager, config.Email); err != nil {
 					initLogs.LogIPBanError("Ошибка отключения забаненного конфига %s: %v", config.Email, err)
 				} else {
 					initLogs.LogIPBanInfo("Забаненный конфиг %s успешно отключен в панели", config.Email)
@@ -162,7 +163,7 @@ func (s *IPBanService) performCheck() {
 			if !config.Enable {
 				// Отключенный конфиг без активности - включаем
 				initLogs.LogIPBanInfo("Конфиг без активности: %s (отключен, включаем)", config.Email)
-				if err := s.ConfigManager.EnableConfig(config.Email); err != nil {
+				if err := client.Enable(s.ConfigManager, config.Email); err != nil {
 					initLogs.LogIPBanError("Ошибка включения конфига %s: %v", config.Email, err)
 				} else {
 					initLogs.LogIPBanInfo("Конфиг %s успешно включен", config.Email)
@@ -215,8 +216,8 @@ func (s *IPBanService) handleSuspiciousConfig(stats *analyzerLogs.EmailIPStats) 
 
 	// Мгновенно отключаем конфиг и ротируем UUID, чтобы обрубить активные сессии без рестарта Xray
 	initLogs.LogIPBanInfo("   🔒 Отключение и ротация UUID для %s...", stats.Email)
-	if _, err := s.ConfigManager.DisableAndRotateConfig(stats.Email); err != nil {
-		initLogs.LogIPBanError("❌ Ошибка DisableAndRotateConfig для %s: %v", stats.Email, err)
+	if _, err := client.RotateUUID(s.ConfigManager, stats.Email); err != nil {
+		initLogs.LogIPBanError("❌ Ошибка RotateUUID для %s: %v", stats.Email, err)
 	} else {
 		initLogs.LogIPBanInfo("   ✅ Конфиг %s отключён, UUID обновлён", stats.Email)
 	}
@@ -246,13 +247,13 @@ func (s *IPBanService) handleNormalConfig(stats *analyzerLogs.EmailIPStats) {
 		}
 	} else {
 		// ВАЖНО: Проверяем статус конфига в панели - если он отключен, включаем его
-		currentStatus, err := s.ConfigManager.GetConfigStatus(stats.Email)
+		currentStatus, err := client.Status(s.ConfigManager, stats.Email)
 		if err != nil {
 			initLogs.LogIPBanError("Ошибка получения статуса нормального конфига %s: %v", stats.Email, err)
 		} else if !currentStatus {
 			// Конфиг отключен в панели, но активность нормальная - включаем его
 			initLogs.LogIPBanInfo("   🔓 Нормальный конфиг %s отключен в панели - включаем!", stats.Email)
-			if err := s.ConfigManager.EnableConfig(stats.Email); err != nil {
+			if err := client.Enable(s.ConfigManager, stats.Email); err != nil {
 				initLogs.LogIPBanError("Ошибка включения нормального конфига %s: %v", stats.Email, err)
 			} else {
 				initLogs.LogIPBanInfo("   ✅ Нормальный конфиг %s успешно включен в панели", stats.Email)
@@ -322,10 +323,10 @@ func (s *IPBanService) PrintCurrentStats() {
 
 // IPTablesManager управляет блокировкой IP через iptables
 // getIPAddressesFromStats извлекает IP адреса из статистики для логирования
-func getIPAddressesFromStats(stats *analyzerLogs.EmailIPStats) []string {
-	var ips []string
-	for ip := range stats.IPs {
-		ips = append(ips, ip)
-	}
-	return ips
-}
+// func getIPAddressesFromStats(stats *analyzerLogs.EmailIPStats) []string {
+// 	var ips []string
+// 	for ip := range stats.IPs {
+// 		ips = append(ips, ip)
+// 	}
+// 	return ips
+// }
