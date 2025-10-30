@@ -54,7 +54,7 @@ var (
 // Инициализация настроек IP-бана и логирования
 func init() {
 	// Максимум IP на конфиг.
-	MAX_IPS_PER_CONFIG = 4
+	MAX_IPS_PER_CONFIG = 10
 	// Путь к access.log.
 	ACCESS_LOG_PATH = "/usr/local/x-ui/access.log"
 	// Путь к файлу накопленных логов.
@@ -62,11 +62,9 @@ func init() {
 	// Путь к логам IP бана.
 	IP_BAN_LOG_PATH = "/root/tools/ipBanSystem/logs/ip_ban.log"
 	// Интервал сохранения логов (минуты).
-	// IP_SAVE_INTERVAL = 25
-	IP_SAVE_INTERVAL = 1
+	IP_SAVE_INTERVAL = 25
 	// Интервал проверки IP (минуты).
-	// IP_CHECK_INTERVAL = 22
-	IP_CHECK_INTERVAL = 1
+	IP_CHECK_INTERVAL = 22
 	// Период ожидания перед баном (минуты).
 	IP_BAN_GRACE_PERIOD = 10
 	// Длительность бана (минуты).

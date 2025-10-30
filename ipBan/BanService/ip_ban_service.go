@@ -163,7 +163,7 @@ func (s *IPBanService) performCheck() {
 			if !config.Enable {
 				// Отключенный конфиг без активности - включаем
 				initLogs.LogIPBanInfo("Конфиг без активности: %s (отключен, включаем)", config.Email)
-				if err := client.Enable(s.ConfigManager, config.Email); err != nil {
+				if err := client.EnableConfig(s.ConfigManager, config.Email); err != nil {
 					initLogs.LogIPBanError("Ошибка включения конфига %s: %v", config.Email, err)
 				} else {
 					initLogs.LogIPBanInfo("Конфиг %s успешно включен", config.Email)
@@ -175,10 +175,79 @@ func (s *IPBanService) performCheck() {
 		}
 	}
 
+	// Фаза 2: проверяем возможность разбана и включения нормализовавшихся конфигов
+	unbannedCount := 0
+	reEnabledCount := 0
+
+	for _, config := range allConfigs {
+		// Обрабатываем только тех, кто находится в бане
+		if !s.BanManager.IsBanned(config.Email) {
+			continue
+		}
+
+		// Получаем статистику IP (если нет активности — считаем 0 IP)
+		ipStats, hasActivity := ipStatsMap[config.Email]
+		ipCount := 0
+		if hasActivity {
+			ipCount = ipStats.TotalIPs
+		}
+
+		// Если количество IP не превышает лимит — разбаниваем и включаем конфиг
+		if ipCount <= s.MaxIPs {
+			initLogs.LogIPBanInfo("Разбан и повторное включение: %s (IP: %d, лимит: %d)", config.Email, ipCount, s.MaxIPs)
+
+			// Разбан
+			if err := s.BanManager.UnbanUser(config.Email); err != nil {
+				initLogs.LogIPBanError("Ошибка разбана %s: %v", config.Email, err)
+			} else {
+				unbannedCount++
+			}
+
+			// После разбана: сбросить статус "исчерпано" (depleted/exhausted=false)
+			if err := client.ResetDepletedStatus(s.ConfigManager, config.Email); err != nil {
+				initLogs.LogIPBanError("Ошибка сброса статуса 'исчерпано' для %s: %v", config.Email, err)
+			} else {
+				initLogs.LogIPBanInfo("   ✅ Снят статус 'исчерпано' для %s", config.Email)
+			}
+
+			// Разблокируем IP в iptables (если были зафиксированы)
+			if hasActivity {
+				unblocked := 0
+				for ip := range ipStats.IPs {
+					if s.IPTables.IsIPBlocked(ip) {
+						if err := s.IPTables.UnblockIP(ip); err != nil {
+							initLogs.LogIPBanError("Ошибка разблокировки IP %s: %v", ip, err)
+						} else {
+							unblocked++
+						}
+					}
+				}
+				if unblocked > 0 {
+					initLogs.LogIPBanInfo("   ✅ Разблокировано %d IP адресов через iptables", unblocked)
+				}
+			}
+
+			// Включаем конфиг в панели при необходимости
+			currentStatus, err := client.Status(s.ConfigManager, config.Email)
+			if err != nil {
+				initLogs.LogIPBanError("Ошибка получения статуса конфига %s: %v", config.Email, err)
+			} else if !currentStatus {
+				if err := client.EnableConfig(s.ConfigManager, config.Email); err != nil {
+					initLogs.LogIPBanError("Ошибка включения конфига %s после разбана: %v", config.Email, err)
+				} else {
+					initLogs.LogIPBanInfo("   ✅ Конфиг %s включен после разбана", config.Email)
+					reEnabledCount++
+				}
+			}
+		}
+	}
+
 	initLogs.LogIPBanInfo("Подозрительных конфигов: %d", suspiciousCount)
 	initLogs.LogIPBanInfo("Нормальных конфигов: %d", normalCount)
 	initLogs.LogIPBanInfo("Включено отключенных: %d", enabledCount)
 	initLogs.LogIPBanInfo("Забаненных конфигов: %d", bannedCount)
+	initLogs.LogIPBanInfo("Разбанено конфигов: %d", unbannedCount)
+	initLogs.LogIPBanInfo("Повторно включено после разбана: %d", reEnabledCount)
 	initLogs.LogIPBanInfo("Проверка завершена")
 }
 
@@ -253,7 +322,7 @@ func (s *IPBanService) handleNormalConfig(stats *analyzerLogs.EmailIPStats) {
 		} else if !currentStatus {
 			// Конфиг отключен в панели, но активность нормальная - включаем его
 			initLogs.LogIPBanInfo("   🔓 Нормальный конфиг %s отключен в панели - включаем!", stats.Email)
-			if err := client.Enable(s.ConfigManager, stats.Email); err != nil {
+			if err := client.EnableConfig(s.ConfigManager, stats.Email); err != nil {
 				initLogs.LogIPBanError("Ошибка включения нормального конфига %s: %v", stats.Email, err)
 			} else {
 				initLogs.LogIPBanInfo("   ✅ Нормальный конфиг %s успешно включен в панели", stats.Email)
