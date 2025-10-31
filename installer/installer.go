@@ -29,7 +29,11 @@ func InstallService() {
 
 	// Шаг 2: Создание файла сервиса systemd
 	fmt.Println("Шаг 2: Создание файла сервиса systemd...")
-	workingDir, _ := os.Getwd()
+	// Исправление: обработка ошибки, которая раньше игнорировалась (err был присвоен _)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Ошибка получения текущей директории: %v", err)
+	}
 	serviceFileContent := fmt.Sprintf(`[Unit]
 Description=%s
 After=network.target

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"ipBanSystem/ipBan/logger/initLogs"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -18,9 +19,11 @@ type BanInfo struct {
 }
 
 // BanManager управляет банами пользователей
+// mutex добавлен для предотвращения гонок при одновременном доступе к карте Bans из разных горутин
 type BanManager struct {
 	BansFile string
 	Bans     map[string]*BanInfo
+	mutex    sync.RWMutex // Мьютекс для синхронизации доступа к карте Bans
 }
 
 // NewBanManager создает новый менеджер банов
@@ -58,8 +61,12 @@ func (bm *BanManager) saveBans() error {
 }
 
 // IsBanned проверяет, забанен ли пользователь
+// Использует RWMutex для защиты от гонок при одновременном доступе к карте Bans
 func (bm *BanManager) IsBanned(email string) bool {
+	bm.mutex.RLock() // Блокировка на чтение
 	ban, exists := bm.Bans[email]
+	bm.mutex.RUnlock()
+	
 	if !exists {
 		return false
 	}
@@ -72,8 +79,11 @@ func (bm *BanManager) IsBanned(email string) bool {
 		initLogs.LogIPBanInfo("Пользователь %s автоматически разбанен при проверке (бан истек: %s)",
 			email, ban.ExpiresAt.Format("2006-01-02 15:04:05"))
 
+		// При удалении элемента из карты нужна блокировка на запись
+		bm.mutex.Lock()
 		delete(bm.Bans, email)
 		bm.saveBans()
+		bm.mutex.Unlock()
 		return false
 	}
 
@@ -81,6 +91,7 @@ func (bm *BanManager) IsBanned(email string) bool {
 }
 
 // BanUser банит пользователя
+// Использует mutex.Lock() для обеспечения атомарности операции добавления нового бана
 func (bm *BanManager) BanUser(email string, reason string, ipAddresses []string) error {
 	banDuration := time.Duration(IP_BAN_DURATION) * time.Minute
 	if IP_BAN_DURATION <= 0 {
@@ -96,7 +107,11 @@ func (bm *BanManager) BanUser(email string, reason string, ipAddresses []string)
 		IPAddresses: ipAddresses,
 	}
 
+	// Блокировка на запись при модификации карты Bans
+	bm.mutex.Lock()
 	bm.Bans[email] = ban
+	err := bm.saveBans()
+	bm.mutex.Unlock()
 
 	// Логируем в bot.log: банирование пользователя
 	initLogs.LogIPBanAction("ЗАБАНЕН", email, len(ipAddresses), ipAddresses)
@@ -112,13 +127,18 @@ func (bm *BanManager) BanUser(email string, reason string, ipAddresses []string)
 		initLogs.LogBannedUser(ban.Email, ban.IPAddresses, ban.Reason, ban.ExpiresAt)
 	}
 
-	return bm.saveBans()
+	return err
 }
 
 // UnbanUser разбанивает пользователя
+// Использует синхронизацию для безопасного удаления элемента из общей карты
 func (bm *BanManager) UnbanUser(email string) error {
 	// Получаем информацию о бане перед удалением
+	// Используем RLock при чтении из карты
+	bm.mutex.RLock()
 	banInfo, exists := bm.Bans[email]
+	bm.mutex.RUnlock()
+	
 	if exists {
 		// Логируем в bot.log: разбанирование пользователя с деталями
 		initLogs.LogIPBanAction("РАЗБАНЕН", email, len(banInfo.IPAddresses), banInfo.IPAddresses)
@@ -131,13 +151,20 @@ func (bm *BanManager) UnbanUser(email string) error {
 		// Логируем в bot.log: попытка разбанить несуществующего пользователя
 	}
 
+	// Блокировка на запись при удалении из карты Bans
+	bm.mutex.Lock()
 	delete(bm.Bans, email)
-	return bm.saveBans()
+	err := bm.saveBans()
+	bm.mutex.Unlock()
+	return err
 }
 
 // GetBanInfo возвращает информацию о бане пользователя
 func (bm *BanManager) GetBanInfo(email string) *BanInfo {
+	bm.mutex.RLock()
 	ban, exists := bm.Bans[email]
+	bm.mutex.RUnlock()
+	
 	if !exists {
 		return nil
 	}
@@ -149,8 +176,10 @@ func (bm *BanManager) GetBanInfo(email string) *BanInfo {
 		initLogs.LogIPBanInfo("Пользователь %s автоматически разбанен при запросе информации (бан истек: %s)",
 			email, ban.ExpiresAt.Format("2006-01-02 15:04:05"))
 
+		bm.mutex.Lock()
 		delete(bm.Bans, email)
 		bm.saveBans()
+		bm.mutex.Unlock()
 		return nil
 	}
 
@@ -162,6 +191,7 @@ func (bm *BanManager) CleanupExpiredBans() {
 	now := time.Now()
 	expiredCount := 0
 
+	bm.mutex.Lock()
 	for email, ban := range bm.Bans {
 		if now.After(ban.ExpiresAt) {
 			// Логируем в bot.log: автоматическое разбанирование по истечении срока
@@ -182,6 +212,7 @@ func (bm *BanManager) CleanupExpiredBans() {
 		// Логируем в bot.log: общая статистика очистки
 		initLogs.LogIPBanInfo("Очистка истекших банов: удалено %d пользователей", expiredCount)
 	}
+	bm.mutex.Unlock()
 }
 
 // CleanupOldBans удаляет баны, которые истекли дольше заданного времени назад
@@ -196,6 +227,7 @@ func (bm *BanManager) CleanupOldBans(retentionMinutes int) {
 
 	fmt.Printf("BAN_MANAGER: Очистка старых банов: удаляются баны, истекшие дольше %d минут назад\n", retentionMinutes)
 
+	bm.mutex.Lock()
 	for email, ban := range bm.Bans {
 		// Удаляем баны, которые истекли дольше retentionMinutes назад
 		if ban.ExpiresAt.Before(cutoffTime) {
@@ -218,18 +250,29 @@ func (bm *BanManager) CleanupOldBans(retentionMinutes int) {
 		// Логируем в bot.log: общая статистика очистки старых банов
 		initLogs.LogIPBanInfo("Очистка старых банов: удалено %d пользователей (старше %d минут)", oldBansCount, retentionMinutes)
 	}
+	bm.mutex.Unlock()
 }
 
 // GetActiveBans возвращает список активных банов
 func (bm *BanManager) GetActiveBans() map[string]*BanInfo {
 	bm.CleanupExpiredBans() // Очищаем истекшие баны
-	return bm.Bans
+	
+	bm.mutex.RLock()
+	defer bm.mutex.RUnlock()
+	
+	// Создаем копию карты, чтобы избежать race condition при возврате
+	activeBans := make(map[string]*BanInfo)
+	for k, v := range bm.Bans {
+		activeBans[k] = v
+	}
+	return activeBans
 }
 
 // GetBanStats возвращает статистику банов
 func (bm *BanManager) GetBanStats() map[string]interface{} {
 	bm.CleanupExpiredBans()
 
+	bm.mutex.RLock()
 	totalBans := len(bm.Bans)
 	expiredSoon := 0
 	now := time.Now()
@@ -239,6 +282,7 @@ func (bm *BanManager) GetBanStats() map[string]interface{} {
 			expiredSoon++
 		}
 	}
+	bm.mutex.RUnlock()
 
 	return map[string]interface{}{
 		"total_bans":     totalBans,

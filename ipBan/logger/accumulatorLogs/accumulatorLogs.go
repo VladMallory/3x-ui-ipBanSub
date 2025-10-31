@@ -6,6 +6,7 @@ import (
 	ipban "ipBanSystem/ipBan/BanService"
 	"log"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type LogAccumulator struct {
 	LastReadPos     int64  // Позиция последнего прочитанного байта
 	Running         bool   // Запущен ли сервис
 	StopChan        chan bool
+	mutex           sync.Mutex // Мьютекс для синхронизации доступа к LastReadPos, предотвращающий гонки
 }
 
 // NewLogAccumulator создает новый накопитель логов
@@ -76,6 +78,7 @@ func (la *LogAccumulator) accumulationLoop() {
 }
 
 // AccumulateNewLines читает новые строки из access.log и добавляет их в файл накопления
+// Использует mutex для безопасного доступа к переменной LastReadPos, предотвращая гонки
 func (la *LogAccumulator) AccumulateNewLines() {
 	log.Printf("LOG_ACCUMULATOR: Начало накопления новых строк")
 
@@ -95,21 +98,26 @@ func (la *LogAccumulator) AccumulateNewLines() {
 	}
 
 	// Если файл стал меньше (ротация лога), сбрасываем позицию
-	if fileInfo.Size() < la.LastReadPos {
+	la.mutex.Lock()
+	currentLastReadPos := la.LastReadPos
+	if fileInfo.Size() < currentLastReadPos {
 		log.Printf("LOG_ACCUMULATOR: Обнаружена ротация лога, сбрасываем позицию чтения")
 		la.LastReadPos = 0
+		currentLastReadPos = 0 // update the local copy too
 	}
 
 	// Если нет новых данных, выходим
-	if la.LastReadPos >= fileInfo.Size() {
+	if currentLastReadPos >= fileInfo.Size() {
 		log.Printf("LOG_ACCUMULATOR: Нет новых данных для накопления")
+		la.mutex.Unlock()
 		return
 	}
 
 	// Переходим к позиции последнего прочитанного байта
-	_, err = sourceFile.Seek(la.LastReadPos, 0)
+	_, err = sourceFile.Seek(currentLastReadPos, 0)
 	if err != nil {
 		log.Printf("LOG_ACCUMULATOR: Ошибка позиционирования в файле: %v", err)
+		la.mutex.Unlock()
 		return
 	}
 
@@ -117,6 +125,7 @@ func (la *LogAccumulator) AccumulateNewLines() {
 	accumulatedFile, err := os.OpenFile(la.AccumulatedPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		log.Printf("LOG_ACCUMULATOR: Ошибка открытия файла накопления %s: %v", la.AccumulatedPath, err)
+		la.mutex.Unlock()
 		return
 	}
 	defer accumulatedFile.Close()
@@ -147,10 +156,15 @@ func (la *LogAccumulator) AccumulateNewLines() {
 	currentPos, err := sourceFile.Seek(0, 1) // Получаем текущую позицию
 	if err == nil {
 		la.LastReadPos = currentPos
+	}
+	la.mutex.Unlock()
+
+	// Сохраняем позицию вне блокировки, чтобы избежать взаимной блокировки
+	if err == nil {
 		la.savePosition()
 	}
 
-	log.Printf("LOG_ACCUMULATOR: Накоплено %d новых строк, позиция: %d", linesCount, la.LastReadPos)
+	log.Printf("LOG_ACCUMULATOR: Накоплено %d новых строк, позиция: %d", linesCount, currentPos)
 
 	if err := scanner.Err(); err != nil {
 		log.Printf("LOG_ACCUMULATOR: Ошибка чтения исходного файла: %v", err)
@@ -238,7 +252,12 @@ func (la *LogAccumulator) extractTimestamp(line string) (time.Time, error) {
 }
 
 // savePosition сохраняет текущую позицию чтения
+// Использует mutex для безопасного доступа к переменной LastReadPos, предотвращая гонки
 func (la *LogAccumulator) savePosition() {
+	la.mutex.Lock()
+	currentPos := la.LastReadPos
+	la.mutex.Unlock()
+	
 	posFile := la.AccumulatedPath + ".pos"
 	file, err := os.Create(posFile)
 	if err != nil {
@@ -247,28 +266,37 @@ func (la *LogAccumulator) savePosition() {
 	}
 	defer file.Close()
 
-	fmt.Fprintf(file, "%d", la.LastReadPos)
+	fmt.Fprintf(file, "%d", currentPos)
 }
 
 // restorePosition восстанавливает позицию чтения
+// Использует mutex для безопасного доступа к переменной LastReadPos, предотвращая гонки
 func (la *LogAccumulator) restorePosition() {
 	posFile := la.AccumulatedPath + ".pos"
 	file, err := os.Open(posFile)
 	if err != nil {
 		log.Printf("LOG_ACCUMULATOR: Позиция не найдена, начинаем с начала файла")
+		la.mutex.Lock()
 		la.LastReadPos = 0
+		la.mutex.Unlock()
 		return
 	}
 	defer file.Close()
 
-	_, err = fmt.Fscanf(file, "%d", &la.LastReadPos)
+	var pos int64
+	_, err = fmt.Fscanf(file, "%d", &pos)
 	if err != nil {
 		log.Printf("LOG_ACCUMULATOR: Ошибка чтения позиции: %v", err)
+		la.mutex.Lock()
 		la.LastReadPos = 0
+		la.mutex.Unlock()
 		return
 	}
 
-	log.Printf("LOG_ACCUMULATOR: Восстановлена позиция чтения: %d", la.LastReadPos)
+	la.mutex.Lock()
+	la.LastReadPos = pos
+	la.mutex.Unlock()
+	log.Printf("LOG_ACCUMULATOR: Восстановлена позиция чтения: %d", pos)
 }
 
 // StartCleanupService запускает сервис очистки старых строк
