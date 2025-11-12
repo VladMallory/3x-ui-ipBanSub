@@ -54,7 +54,7 @@ var (
 // Инициализация настроек IP-бана и логирования
 func init() {
 	// Максимум IP на конфиг.
-	MAX_IPS_PER_CONFIG = 10
+	MAX_IPS_PER_CONFIG = 12
 	// Путь к access.log.
 	ACCESS_LOG_PATH = "/usr/local/x-ui/access.log"
 	// Путь к файлу накопленных логов.

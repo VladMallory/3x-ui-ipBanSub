@@ -1,13 +1,14 @@
 package ipban
 
 import (
-	"fmt"
-	"ipBanSystem/ipBan/logger/analyzerLogs"
-	"ipBanSystem/ipBan/logger/initLogs"
-	"ipBanSystem/ipBan/panel"
-	"ipBanSystem/ipBan/panel/client"
-	"strings"
-	"time"
+    "fmt"
+    "ipBanSystem/ipBan/logger/analyzerLogs"
+    "ipBanSystem/ipBan/logger/initLogs"
+    "ipBanSystem/ipBan/panel"
+    "ipBanSystem/ipBan/panel/client"
+    adjustingdays "ipBanSystem/ipBan/panel/client/adjusting_days"
+    "strings"
+    "time"
 )
 
 // IPBanService основной сервис для управления IP банами
@@ -197,11 +198,20 @@ func (s *IPBanService) performCheck() {
 			initLogs.LogIPBanInfo("Разбан и повторное включение: %s (IP: %d, лимит: %d)", config.Email, ipCount, s.MaxIPs)
 
 			// Разбан
-			if err := s.BanManager.UnbanUser(config.Email); err != nil {
-				initLogs.LogIPBanError("Ошибка разбана %s: %v", config.Email, err)
-			} else {
-				unbannedCount++
-			}
+            if err := s.BanManager.UnbanUser(config.Email); err != nil {
+                initLogs.LogIPBanError("Ошибка разбана %s: %v", config.Email, err)
+            } else {
+                unbannedCount++
+
+                // Через 10 секунд после успешного разбана — добавить +1 день к подписке
+                time.AfterFunc(10*time.Second, func() {
+                    if err := adjustingdays.AddOneDay(s.ConfigManager, config.Email); err != nil {
+                        initLogs.LogIPBanError("Ошибка добавления +1 дня для %s: %v", config.Email, err)
+                    } else {
+                        initLogs.LogIPBanInfo("   🎁 +1 день добавлен для %s после разбана", config.Email)
+                    }
+                })
+            }
 
 			// После разбана: сбросить статус "исчерпано" (depleted/exhausted=false)
 			if err := client.ResetDepletedStatus(s.ConfigManager, config.Email); err != nil {
